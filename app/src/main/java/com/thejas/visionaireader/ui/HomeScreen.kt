@@ -35,12 +35,12 @@ import com.thejas.visionaireader.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.max
 
 @Composable
 fun HomeScreen(
     onReadBook: () -> Unit,
-    onChat: () -> Unit
+    onChat: () -> Unit,
+    onAgent: () -> Unit
 ) {
     val now = remember { Date() }
     val timestamp = remember(now) {
@@ -90,14 +90,19 @@ fun HomeScreen(
             color = InkSecondary
         )
 
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(28.dp))
 
-        // ── Primary action: large amber card ──
+        // ── Primary action: amber Read card ──
         ReadCard(onClick = onReadBook)
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
 
-        // ── Secondary action: short ink card with 3-bar equalizer ──
+        // ── Personal Agent: ink card with amber accent ──
+        AgentCard(onClick = onAgent)
+
+        Spacer(Modifier.height(12.dp))
+
+        // ── Chat with AI ──
         ChatCard(onClick = onChat)
 
         Spacer(Modifier.weight(1f))
@@ -123,15 +128,14 @@ private fun ReadCard(onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(260.dp)
-            .clip(RoundedCornerShape(28.dp))
+            .height(180.dp)
+            .clip(RoundedCornerShape(26.dp))
             .background(Amber)
             .clickable(onClick = onClick)
     ) {
         // Paper-corner page-turn decoration (bottom right)
         androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-            val r = 64.dp.toPx()
-            // Quarter circle in bottom-right using Paper color (suggests page corner)
+            val r = 48.dp.toPx()
             drawArc(
                 color = Paper,
                 startAngle = 0f,
@@ -145,9 +149,8 @@ private fun ReadCard(onClick: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(28.dp)
+                .padding(22.dp)
         ) {
-            // Top: mono caps label
             Text(
                 "PRIMARY",
                 style = MaterialTheme.typography.labelSmall,
@@ -156,33 +159,91 @@ private fun ReadCard(onClick: () -> Unit) {
 
             Spacer(Modifier.weight(1f))
 
-            // Big editorial headline: "Read" italic serif, "a book." sans
             Text(
                 buildAnnotatedString {
                     withStyle(SpanStyle(
                         fontFamily = InstrumentSerif,
                         fontStyle = FontStyle.Italic,
-                        fontSize = 56.sp,
-                        letterSpacing = (-1.5).sp
+                        fontSize = 44.sp,
+                        letterSpacing = (-1.2).sp
                     )) { append("Read ") }
                     withStyle(SpanStyle(
                         fontFamily = InterTight,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 38.sp,
-                        letterSpacing = (-0.6).sp
+                        fontSize = 30.sp,
+                        letterSpacing = (-0.5).sp
                     )) { append("a book.") }
                 },
                 color = Ink,
-                lineHeight = 56.sp
+                lineHeight = 44.sp
             )
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(6.dp))
 
             Text(
-                "Point the camera at any document.\nWe'll read every word out loud.",
+                "Long documents — read aloud, paragraph by paragraph.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Ink.copy(alpha = 0.75f)
+                color = Ink.copy(alpha = 0.75f),
+                fontSize = 13.sp
             )
+        }
+    }
+}
+
+@Composable
+private fun AgentCard(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(150.dp)
+            .clip(RoundedCornerShape(26.dp))
+            .background(Ink)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 22.dp, vertical = 18.dp)
+    ) {
+        CompositionLocalProvider(LocalContentColor provides Paper) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).background(Amber, CircleShape))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "AGENT  ·  SCAN & ACT",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Paper.copy(alpha = 0.55f)
+                    )
+                }
+
+                Spacer(Modifier.weight(1f))
+
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(
+                            fontFamily = InstrumentSerif,
+                            fontStyle = FontStyle.Italic,
+                            fontSize = 34.sp,
+                            letterSpacing = (-0.8).sp
+                        )) { append("Personal ") }
+                        withStyle(SpanStyle(
+                            fontFamily = InterTight,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 26.sp,
+                            letterSpacing = (-0.4).sp
+                        )) { append("Agent.") }
+                    },
+                    color = Paper,
+                    lineHeight = 36.sp
+                )
+
+                Spacer(Modifier.height(4.dp))
+
+                Text(
+                    "Bills, invitations, labels, menus — I'll read it AND tell you what to do.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Paper.copy(alpha = 0.7f),
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp
+                )
+            }
         }
     }
 }
@@ -192,11 +253,11 @@ private fun ChatCard(onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(112.dp)
-            .clip(RoundedCornerShape(28.dp))
+            .height(98.dp)
+            .clip(RoundedCornerShape(26.dp))
             .background(Ink)
             .clickable(onClick = onClick)
-            .padding(horizontal = 28.dp, vertical = 22.dp)
+            .padding(horizontal = 22.dp, vertical = 18.dp)
     ) {
         CompositionLocalProvider(LocalContentColor provides Paper) {
             Row(

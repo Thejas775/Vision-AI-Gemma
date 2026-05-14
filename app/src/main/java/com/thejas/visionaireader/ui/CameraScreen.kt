@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.speech.tts.TextToSpeech
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.*
@@ -53,6 +54,8 @@ fun CameraScreen(onImageCaptured: (Bitmap) -> Unit, onBack: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+
+    BackHandler { onBack() }
 
     var hasPermission by remember {
         mutableStateOf(
@@ -119,7 +122,9 @@ fun CameraScreen(onImageCaptured: (Bitmap) -> Unit, onBack: () -> Unit) {
         val now = System.currentTimeMillis()
         if (!ttsReady.value) return
         if (msg != lastSpoken.value || now - lastSpokenTime.longValue > 2000L) {
-            tts.value?.speak(msg, TextToSpeech.QUEUE_FLUSH, null, "guidance")
+            val t = tts.value ?: return
+            t.playSilentUtterance(180, TextToSpeech.QUEUE_FLUSH, null)
+            t.speak(msg, TextToSpeech.QUEUE_ADD, null, "guidance")
             lastSpoken.value = msg
             lastSpokenTime.longValue = now
         }

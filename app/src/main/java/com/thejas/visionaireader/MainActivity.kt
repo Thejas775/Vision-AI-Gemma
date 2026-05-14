@@ -15,6 +15,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
+import com.thejas.visionaireader.ui.AgentScreen
 import com.thejas.visionaireader.ui.CameraScreen
 import com.thejas.visionaireader.ui.ChatScreen
 import com.thejas.visionaireader.ui.HomeScreen
@@ -54,7 +55,8 @@ class MainActivity : ComponentActivity() {
                             )
                             is Screen.Home -> HomeScreen(
                                 onReadBook = { viewModel.goToCameraScreen() },
-                                onChat = { viewModel.goToChatScreen() }
+                                onChat = { viewModel.goToChatScreen() },
+                                onAgent = { viewModel.goToAgentScreen() }
                             )
                             is Screen.Camera -> CameraScreen(
                                 onImageCaptured = { bitmap -> viewModel.onImageCaptured(bitmap) },
@@ -80,6 +82,16 @@ class MainActivity : ComponentActivity() {
                                 isAiThinking = state.isAiThinking,
                                 onBack = { viewModel.goToHome() },
                                 onSendMessage = { text -> viewModel.sendChatMessage(text) }
+                            )
+                            is Screen.Agent -> AgentScreen(
+                                state = state.agent,
+                                onBack = { viewModel.goToHome() },
+                                onCapture = { bitmap -> viewModel.onAgentImageCaptured(bitmap) },
+                                onSpeechFinished = { viewModel.onAgentFinishedSpeaking() },
+                                onYesNo = { yes -> viewModel.onAgentYesNoAnswer(yes) },
+                                onMenuQuestion = { q -> viewModel.onMenuQuestionAsked(q) },
+                                onMenuAnswerSpoken = { viewModel.onMenuAnswerSpoken() },
+                                onScanAgain = { viewModel.resetAgent() }
                             )
                         }
                     }

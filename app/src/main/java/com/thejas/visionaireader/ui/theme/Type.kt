@@ -22,7 +22,7 @@ private val provider = GoogleFont.Provider(
 )
 
 val InstrumentSerif = FontFamily(
-    Font(GoogleFont("Instrument Serif"), provider, FontWeight.Normal, FontStyle.Normal),
+        Font(GoogleFont("Instrument Serif"), provider, FontWeight.Normal, FontStyle.Normal),
     Font(GoogleFont("Instrument Serif"), provider, FontWeight.Normal, FontStyle.Italic),
 )
 

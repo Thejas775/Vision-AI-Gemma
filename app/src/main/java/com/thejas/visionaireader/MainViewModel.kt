@@ -8,8 +8,12 @@ import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.thejas.visionaireader.engine.AgentAction
+import com.thejas.visionaireader.engine.AgentParser
+import com.thejas.visionaireader.engine.AgentTools
 import com.thejas.visionaireader.engine.InferenceEngine
 import com.thejas.visionaireader.engine.OcrEngine
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +39,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val inferenceEngine = InferenceEngine(application)
     private val ocrEngine = OcrEngine()
+    private val agentTools = AgentTools(application)
 
     // LiteRT-LM only ships arm64-v8a / x86_64. 32-bit processes can't load it.
     private val canRunLiteRt: Boolean =
@@ -121,6 +126,187 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             chatMessages = emptyList(),
             isAiThinking = false
         )
+    }
+
+    fun goToAgentScreen() {
+        _state.value = _state.value.copy(
+            currentScreen = Screen.Agent,
+            agent = AgentState(stage = AgentStage.Capturing)
+        )
+    }
+
+    // ── Agent state machine ─────────────────────────────────────────────
+
+    /** User tapped capture in the agent camera. Bitmap → OCR → Gemma analyze. */
+    fun onAgentImageCaptured(bitmap: android.graphics.Bitmap) {
+        viewModelScope.launch {
+            try {
+                _state.value = _state.value.copy(agent = _state.value.agent.copy(stage = AgentStage.Ocr))
+                val ocrText = ocrEngine.extractText(bitmap)
+                withContext(Dispatchers.IO) { bitmap.recycle() }
+                Log.d("VisionAgent", "─── OCR OUTPUT ───────────────────────────")
+                Log.d("VisionAgent", ocrText.ifBlank { "<empty>" })
+                Log.d("VisionAgent", "──────────────────────────────────────────")
+
+                if (ocrText.isBlank()) {
+                    _state.value = _state.value.copy(agent = _state.value.agent.copy(
+                        stage = AgentStage.Error,
+                        errorMessage = "No text detected. Try again with better light."
+                    ))
+                    return@launch
+                }
+
+                _state.value = _state.value.copy(agent = _state.value.agent.copy(
+                    stage = AgentStage.Thinking,
+                    ocrText = ocrText
+                ))
+
+                if (!engineReady) {
+                    // OCR-only fallback for 32-bit devices
+                    _state.value = _state.value.copy(agent = _state.value.agent.copy(
+                        stage = AgentStage.Speaking,
+                        spokenText = ocrText.take(500),
+                        proposedAction = AgentAction.NONE,
+                        toolCalls = listOf("ocr-only mode")
+                    ))
+                    return@launch
+                }
+
+                val raw = inferenceEngine.agentAnalyze(ocrText)
+                Log.d("VisionAgent", "─── GEMMA RAW RESPONSE ──────────────────")
+                Log.d("VisionAgent", raw)
+                Log.d("VisionAgent", "──────────────────────────────────────────")
+
+                val decision = AgentParser.parse(raw)
+                Log.d("VisionAgent", "Decision: action=${decision.action} title='${decision.title}' date='${decision.dateIso}' ask=${decision.ask}")
+                Log.d("VisionAgent", "Speak: '${decision.speak}'")
+
+                val nextStage = when {
+                    decision.action == AgentAction.WARN -> AgentStage.Speaking
+                    decision.action == AgentAction.NONE -> AgentStage.Speaking
+                    decision.action == AgentAction.MENU && decision.ask -> AgentStage.AwaitingYesNo
+                    decision.ask -> AgentStage.AwaitingYesNo
+                    else -> AgentStage.Speaking
+                }
+
+                _state.value = _state.value.copy(agent = _state.value.agent.copy(
+                    stage = nextStage,
+                    spokenText = decision.speak,
+                    proposedAction = decision.action,
+                    proposedTitle = decision.title,
+                    proposedDateIso = decision.dateIso
+                ))
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(agent = _state.value.agent.copy(
+                    stage = AgentStage.Error,
+                    errorMessage = e.message ?: "Agent failed"
+                ))
+            }
+        }
+    }
+
+    /** UI just finished speaking the question — caller transitions stage to AwaitingYesNo. */
+    fun onAgentFinishedSpeaking() {
+        val s = _state.value.agent
+        if (s.stage == AgentStage.Speaking) {
+            // Single-shot (warn / none) completes after speaking
+            val toolCall = when (s.proposedAction) {
+                AgentAction.WARN -> "warnUser"
+                else -> ""
+            }
+            _state.value = _state.value.copy(agent = s.copy(
+                stage = AgentStage.Done,
+                toolCalls = if (toolCall.isNotBlank()) s.toolCalls + toolCall else s.toolCalls
+            ))
+        }
+    }
+
+    /** User answered the yes/no question. */
+    fun onAgentYesNoAnswer(yes: Boolean) {
+        val s = _state.value.agent
+        if (s.stage != AgentStage.AwaitingYesNo) return
+        if (!yes) {
+            _state.value = _state.value.copy(agent = s.copy(
+                stage = AgentStage.Done,
+                resultMessage = "Okay, no action taken."
+            ))
+            return
+        }
+
+        // For menu — enter Q&A mode instead of firing a one-shot tool
+        if (s.proposedAction == AgentAction.MENU) {
+            _state.value = _state.value.copy(agent = s.copy(
+                stage = AgentStage.MenuChatIdle,
+                toolCalls = s.toolCalls + "loadMenuContext"
+            ))
+            return
+        }
+
+        // Otherwise execute the proposed tool
+        viewModelScope.launch {
+            _state.value = _state.value.copy(agent = s.copy(stage = AgentStage.Acting))
+            val title = s.proposedTitle.ifBlank { "Untitled" }
+            Log.d("VisionAgent", "Firing tool=${s.proposedAction} title='$title' date='${s.proposedDateIso}'")
+            val result = withContext(Dispatchers.IO) {
+                when (s.proposedAction) {
+                    AgentAction.CALENDAR -> {
+                        val r = agentTools.addCalendarEvent(title, s.proposedDateIso)
+                        Pair("addCalendarEvent", r)
+                    }
+                    AgentAction.REMINDER -> {
+                        val r = agentTools.setBillReminder(title, s.proposedDateIso)
+                        Pair("setBillReminder", r)
+                    }
+                    else -> Pair("noop", com.thejas.visionaireader.engine.ToolResult(true, ""))
+                }
+            }
+            Log.d("VisionAgent", "Tool result: success=${result.second.success} msg='${result.second.message}'")
+            _state.value = _state.value.copy(agent = _state.value.agent.copy(
+                stage = AgentStage.Done,
+                toolCalls = _state.value.agent.toolCalls + result.first,
+                resultMessage = result.second.message
+            ))
+        }
+    }
+
+    /** Menu mode: user asked a follow-up question. */
+    fun onMenuQuestionAsked(question: String) {
+        val s = _state.value.agent
+        if (s.ocrText.isBlank()) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(agent = s.copy(
+                stage = AgentStage.MenuChatThinking,
+                menuQuestion = question,
+                menuAnswer = ""
+            ))
+            try {
+                val answer = inferenceEngine.menuAnswer(question, s.ocrText)
+                _state.value = _state.value.copy(agent = _state.value.agent.copy(
+                    stage = AgentStage.MenuChatSpeaking,
+                    menuAnswer = answer,
+                    toolCalls = _state.value.agent.toolCalls + "menuAnswer"
+                ))
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(agent = _state.value.agent.copy(
+                    stage = AgentStage.MenuChatIdle,
+                    menuAnswer = "Sorry, I couldn't answer that.",
+                    errorMessage = e.message ?: ""
+                ))
+            }
+        }
+    }
+
+    /** Called by AgentScreen after TTS finishes speaking the menu answer. */
+    fun onMenuAnswerSpoken() {
+        val s = _state.value.agent
+        if (s.stage == AgentStage.MenuChatSpeaking) {
+            _state.value = _state.value.copy(agent = s.copy(stage = AgentStage.MenuChatIdle))
+        }
+    }
+
+    /** Reset agent to start a new scan. */
+    fun resetAgent() {
+        _state.value = _state.value.copy(agent = AgentState(stage = AgentStage.Capturing))
     }
 
     fun sendChatMessage(text: String) {

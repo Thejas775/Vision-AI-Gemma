@@ -173,6 +173,77 @@ class InferenceEngine(private val context: Context) {
         )
     }
 
+    // ── Agent path ────────────────────────────────────────────────────
+    /**
+     * Analyzes scanned text and decides what agentic action (if any) to take.
+     * Returns a structured response we parse deterministically — more reliable
+     * than native tool-calling for Gemma 4 E2B per Google's field eval.
+     *
+     * Structured format Gemma is asked to emit:
+     *   SPEAK: <message to speak to the user>
+     *   ACTION: <none | calendar | reminder | warn>
+     *   TITLE: <short title for calendar/reminder>
+     *   DATE: <ISO 8601 date or empty>
+     *   ASK: <yes | no>   ← whether to confirm with user before acting
+     */
+    /** Follow-up Q&A about a previously-scanned menu. One short answer, no formatting. */
+    suspend fun menuAnswer(question: String, menuText: String): String = withContext(Dispatchers.IO) {
+        resetConversation()
+        sendText(
+            "You are answering a visually impaired user's question about a restaurant menu they just scanned.\n" +
+            "Answer in ONE short sentence. Speak naturally — this will be read aloud by TTS. " +
+            "Use words for prices (e.g., 'one hundred twenty rupees'). No lists, no markdown.\n\n" +
+            "MENU:\n$menuText\n\n" +
+            "QUESTION: $question"
+        )
+    }
+
+    suspend fun agentAnalyze(ocrText: String): String = withContext(Dispatchers.IO) {
+        resetConversation()
+        val prompt = buildString {
+            append("You are an assistant for blind users. A document was scanned and OCR'd.\n")
+            append("Output EXACTLY these 5 lines, in order, nothing else, no markdown:\n\n")
+            append("SPEAK: <a friendly, complete sentence to read aloud — include people's names, venue, amount, date in words>\n")
+            append("ACTION: <none | calendar | reminder | warn | menu>\n")
+            append("TITLE: <short title for the calendar event or reminder>\n")
+            append("DATE: <ISO 8601 like 2026-06-14T18:00, or just a date 2026-06-14, or empty>\n")
+            append("ASK: <yes or no>\n\n")
+            append("EXAMPLES:\n\n")
+            append("Wedding invitation for Priya and Arjun, June 14 2026 at Taj Palace Mumbai →\n")
+            append("SPEAK: This is a wedding invitation. Priya and Arjun are getting married on June fourteenth, twenty twenty-six, at the Taj Palace in Mumbai. Want me to add it to your calendar?\n")
+            append("ACTION: calendar\n")
+            append("TITLE: Priya & Arjun's wedding\n")
+            append("DATE: 2026-06-14T18:00\n")
+            append("ASK: yes\n\n")
+            append("BSNL electricity bill, ₹420, due May 25 2026 →\n")
+            append("SPEAK: Four hundred twenty rupees. Due May twenty-fifth. This is your BSNL electricity bill. Want a reminder three days before?\n")
+            append("ACTION: reminder\n")
+            append("TITLE: BSNL bill ₹420\n")
+            append("DATE: 2026-05-25\n")
+            append("ASK: yes\n\n")
+            append("Yogurt cup, expired May 12 2026 (today is May 15) →\n")
+            append("SPEAK: This yogurt expired three days ago, on May twelfth. Do not eat this.\n")
+            append("ACTION: warn\n")
+            append("TITLE:\n")
+            append("DATE:\n")
+            append("ASK: no\n\n")
+            append("Restaurant menu from Cafe Madras with 12 items →\n")
+            append("SPEAK: This is a menu from Cafe Madras with about twelve South Indian items. Tap the microphone to ask me anything about it.\n")
+            append("ACTION: menu\n")
+            append("TITLE: Cafe Madras menu\n")
+            append("DATE:\n")
+            append("ASK: yes\n\n")
+            append("RULES:\n")
+            append("- ALWAYS include names, places, amounts, and dates in the SPEAK line if they appear in the text.\n")
+            append("- Speak numbers and dates in words for TTS clarity.\n")
+            append("- For warnings, never ask, just speak the warning clearly.\n")
+            append("- For unknown documents, ACTION: none, ASK: no, and SPEAK a brief description.\n\n")
+            append("OCR TEXT (analyze this now):\n")
+            append(ocrText)
+        }
+        sendText(prompt)
+    }
+
     private fun sendText(prompt: String): String {
         val conv = conversation ?: error("Engine not initialized")
         val response = conv.sendMessage(Contents.of(Content.Text(prompt)))
@@ -183,5 +254,43 @@ class InferenceEngine(private val context: Context) {
         try { (conversation as? AutoCloseable)?.close() } catch (t: Throwable) {}
         conversation = null
         engine = null
+    }
+}
+
+/** Parsed agent decision from the model's structured output. */
+data class AgentDecision(
+    val speak: String,
+    val action: AgentAction,
+    val title: String,
+    val dateIso: String,
+    val ask: Boolean
+)
+
+enum class AgentAction { NONE, CALENDAR, REMINDER, WARN, MENU }
+
+object AgentParser {
+    fun parse(raw: String): AgentDecision {
+        val cleaned = raw.replace("```", "").trim()
+        val map = mutableMapOf<String, String>()
+        cleaned.lines().forEach { line ->
+            val idx = line.indexOf(':')
+            if (idx > 0) {
+                val key = line.substring(0, idx).trim().uppercase()
+                val value = line.substring(idx + 1).trim()
+                map[key] = value
+            }
+        }
+        return AgentDecision(
+            speak = map["SPEAK"]?.takeIf { it.isNotBlank() } ?: cleaned.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty(),
+            action = when (map["ACTION"]?.lowercase()) {
+                "calendar" -> AgentAction.CALENDAR
+                "reminder" -> AgentAction.REMINDER
+                "warn"     -> AgentAction.WARN
+                else        -> AgentAction.NONE
+            },
+            title = map["TITLE"].orEmpty().trim('"', '\''),
+            dateIso = map["DATE"].orEmpty().trim('"', '\''),
+            ask = map["ASK"]?.lowercase()?.startsWith("y") ?: false
+        )
     }
 }

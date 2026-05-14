@@ -72,8 +72,8 @@ dependencies {
     // SmartCropper - document corner detection (same lib as Jyoti app)
     implementation("com.github.pqpo:SmartCropper:v2.1.3")
 
-    // LiteRT-LM - Gemma 4 fully on-device inference
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.0")
+    // LiteRT-LM - Gemma 4 fully on-device inference + native tool calling
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
 
     // ML Kit - on-device OCR (offline, bundled)
     implementation("com.google.mlkit:text-recognition:16.0.1")

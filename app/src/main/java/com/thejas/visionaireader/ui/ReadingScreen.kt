@@ -6,6 +6,7 @@ import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.webkit.WebView
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
@@ -64,6 +65,8 @@ fun ReadingScreen(
 ) {
     val context = LocalContext.current
 
+    BackHandler { onBack() }
+
     val ttsRef = remember { mutableStateOf<TextToSpeech?>(null) }
     val ttsReady = remember { mutableStateOf(false) }
     val isSpeaking = remember { mutableStateOf(false) }
@@ -77,7 +80,10 @@ fun ReadingScreen(
     }
 
     fun speakLine(tts: TextToSpeech, index: Int) {
-        if (index < lines.size) tts.speak(lines[index], TextToSpeech.QUEUE_FLUSH, null, "para_$index")
+        if (index < lines.size) {
+            tts.playSilentUtterance(180, TextToSpeech.QUEUE_FLUSH, null)
+            tts.speak(lines[index], TextToSpeech.QUEUE_ADD, null, "para_$index")
+        }
     }
 
     DisposableEffect(Unit) {
@@ -118,7 +124,9 @@ fun ReadingScreen(
             mode.value = "feature"
             isSpeaking.value = false
             val plain = android.text.Html.fromHtml(featureResult, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
-            ttsRef.value?.speak(plain, TextToSpeech.QUEUE_FLUSH, null, "feature_${System.currentTimeMillis()}")
+            val tts = ttsRef.value ?: return@LaunchedEffect
+            tts.playSilentUtterance(180, TextToSpeech.QUEUE_FLUSH, null)
+            tts.speak(plain, TextToSpeech.QUEUE_ADD, null, "feature_${System.currentTimeMillis()}")
         }
     }
 
@@ -160,7 +168,10 @@ fun ReadingScreen(
             onReplay = {
                 val plain = android.text.Html.fromHtml(featureResult, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
                 mode.value = "feature"
-                ttsRef.value?.speak(plain, TextToSpeech.QUEUE_FLUSH, null, "feature_replay_${System.currentTimeMillis()}")
+                ttsRef.value?.let { t ->
+                    t.playSilentUtterance(180, TextToSpeech.QUEUE_FLUSH, null)
+                    t.speak(plain, TextToSpeech.QUEUE_ADD, null, "feature_replay_${System.currentTimeMillis()}")
+                }
             },
             onStopSpeaking = { ttsRef.value?.stop(); isSpeaking.value = false },
             onDismiss = { ttsRef.value?.stop(); isSpeaking.value = false; onClearFeature() }

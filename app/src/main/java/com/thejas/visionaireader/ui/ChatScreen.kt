@@ -5,6 +5,7 @@ import android.content.Intent
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -56,6 +57,8 @@ fun ChatScreen(
     val context = LocalContext.current
     val listState = rememberLazyListState()
 
+    BackHandler { onBack() }
+
     val ttsRef = remember { mutableStateOf<TextToSpeech?>(null) }
     val ttsReady = remember { mutableStateOf(false) }
     val isAiSpeaking = remember { mutableStateOf(false) }
@@ -84,7 +87,9 @@ fun ChatScreen(
         val lastAi = messages.lastOrNull { !it.isUser } ?: return@LaunchedEffect
         if (lastAi.id != lastSpokenId.longValue && lastAi.text.isNotBlank()) {
             lastSpokenId.longValue = lastAi.id
-            ttsRef.value?.speak(lastAi.text, TextToSpeech.QUEUE_FLUSH, null, "msg_${lastAi.id}")
+            val tts = ttsRef.value ?: return@LaunchedEffect
+            tts.playSilentUtterance(180, TextToSpeech.QUEUE_FLUSH, null)
+            tts.speak(lastAi.text, TextToSpeech.QUEUE_ADD, null, "msg_${lastAi.id}")
         }
     }
 
