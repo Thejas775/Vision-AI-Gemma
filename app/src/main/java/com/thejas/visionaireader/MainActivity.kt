@@ -1,5 +1,7 @@
 package com.thejas.visionaireader
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -30,6 +32,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+
+        handlePdfIntent(intent)
 
         setContent {
             VisionAIReaderTheme {
@@ -80,6 +84,7 @@ class MainActivity : ComponentActivity() {
                             is Screen.Chat -> ChatScreen(
                                 messages = state.chatMessages,
                                 isAiThinking = state.isAiThinking,
+                                isMenuChat = state.isMenuChat,
                                 onBack = { viewModel.goToHome() },
                                 onSendMessage = { text -> viewModel.sendChatMessage(text) }
                             )
@@ -97,6 +102,39 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handlePdfIntent(intent)
+    }
+
+    /** Catch ACTION_VIEW / ACTION_SEND with application/pdf and route into the reading flow. */
+    private fun handlePdfIntent(intent: Intent?) {
+        if (intent == null) return
+        val uri: Uri = when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> {
+                @Suppress("DEPRECATION")
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU)
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                else
+                    intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            }
+            else -> null
+        } ?: return
+
+        val type = intent.type ?: contentResolver.getType(uri) ?: ""
+        val isPdf = type == "application/pdf" ||
+                    uri.toString().lowercase().endsWith(".pdf")
+        if (isPdf) {
+            // Persist read permission for content:// URIs so we can re-read on rotation
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: Exception) { /* not all URIs support persistable perms */ }
+            viewModel.onExternalPdf(uri)
         }
     }
 }

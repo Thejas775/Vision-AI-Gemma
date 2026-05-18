@@ -16,6 +16,7 @@ import com.thejas.visionaireader.engine.AgentParser
 import com.thejas.visionaireader.engine.AgentTools
 import com.thejas.visionaireader.engine.InferenceEngine
 import com.thejas.visionaireader.engine.OcrEngine
+import com.thejas.visionaireader.engine.PdfTextExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +41,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val inferenceEngine = InferenceEngine(application)
     private val ocrEngine = OcrEngine()
     private val agentTools = AgentTools(application)
+    private val pdfExtractor = PdfTextExtractor(application, ocrEngine)
 
     // LiteRT-LM only ships arm64-v8a / x86_64. 32-bit processes can't load it.
     private val canRunLiteRt: Boolean =
@@ -119,12 +121,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    /** External PDF received via ACTION_VIEW / ACTION_SEND — extract text and route to Reading. */
+    fun onExternalPdf(uri: android.net.Uri) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(
+                currentScreen = Screen.Reading,
+                inferenceState = InferenceState.Running,
+                generatedHtml = "",
+                rawOcrText = "",
+                errorMessage = ""
+            )
+            try {
+                Log.d("VisionAgent", "External PDF intent: $uri")
+                val text = pdfExtractor.extractText(uri)
+                Log.d("VisionAgent", "PDF extracted text length=${text.length}")
+                if (text.isBlank()) {
+                    _state.value = _state.value.copy(
+                        inferenceState = InferenceState.Error,
+                        errorMessage = "Couldn't read any text from this PDF."
+                    )
+                    return@launch
+                }
+                val html = if (engineReady) inferenceEngine.formatAsHtml(text) else ocrToBasicHtml(text)
+                _state.value = _state.value.copy(
+                    generatedHtml = html,
+                    rawOcrText = text,
+                    inferenceState = InferenceState.Done
+                )
+            } catch (e: Exception) {
+                Log.e("VisionAgent", "PDF processing failed", e)
+                _state.value = _state.value.copy(
+                    inferenceState = InferenceState.Error,
+                    errorMessage = e.message ?: "PDF processing failed"
+                )
+            }
+        }
+    }
+
     fun goToChatScreen() {
         if (engineReady) inferenceEngine.resetChat()
         _state.value = _state.value.copy(
             currentScreen = Screen.Chat,
             chatMessages = emptyList(),
-            isAiThinking = false
+            isAiThinking = false,
+            isMenuChat = false
         )
     }
 
@@ -184,7 +224,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val nextStage = when {
                     decision.action == AgentAction.WARN -> AgentStage.Speaking
                     decision.action == AgentAction.NONE -> AgentStage.Speaking
-                    decision.action == AgentAction.MENU && decision.ask -> AgentStage.AwaitingYesNo
+                    decision.action == AgentAction.MENU -> AgentStage.Speaking  // speak overview, then auto-route to chat
                     decision.ask -> AgentStage.AwaitingYesNo
                     else -> AgentStage.Speaking
                 }
@@ -208,17 +248,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** UI just finished speaking the question — caller transitions stage to AwaitingYesNo. */
     fun onAgentFinishedSpeaking() {
         val s = _state.value.agent
-        if (s.stage == AgentStage.Speaking) {
-            // Single-shot (warn / none) completes after speaking
-            val toolCall = when (s.proposedAction) {
-                AgentAction.WARN -> "warnUser"
-                else -> ""
-            }
-            _state.value = _state.value.copy(agent = s.copy(
-                stage = AgentStage.Done,
-                toolCalls = if (toolCall.isNotBlank()) s.toolCalls + toolCall else s.toolCalls
-            ))
+        if (s.stage != AgentStage.Speaking) return
+
+        // Menu scan → hand off to Chat with the menu loaded as context
+        if (s.proposedAction == AgentAction.MENU) {
+            if (engineReady) inferenceEngine.primeChatWithMenu(s.ocrText)
+            _state.value = _state.value.copy(
+                currentScreen = Screen.Chat,
+                chatMessages = emptyList(),
+                isAiThinking = false,
+                isMenuChat = true,
+                agent = AgentState() // reset agent state so re-entry starts fresh
+            )
+            return
         }
+
+        // Single-shot (warn / none) completes after speaking
+        val toolCall = when (s.proposedAction) {
+            AgentAction.WARN -> "warnUser"
+            else -> ""
+        }
+        _state.value = _state.value.copy(agent = s.copy(
+            stage = AgentStage.Done,
+            toolCalls = if (toolCall.isNotBlank()) s.toolCalls + toolCall else s.toolCalls
+        ))
     }
 
     /** User answered the yes/no question. */

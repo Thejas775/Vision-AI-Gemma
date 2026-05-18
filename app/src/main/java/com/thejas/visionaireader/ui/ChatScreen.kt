@@ -51,6 +51,7 @@ import java.util.Locale
 fun ChatScreen(
     messages: List<ChatMessage>,
     isAiThinking: Boolean,
+    isMenuChat: Boolean = false,
     onBack: () -> Unit,
     onSendMessage: (String) -> Unit
 ) {
@@ -168,10 +169,15 @@ fun ChatScreen(
                     when {
                         isAiSpeaking.value -> "SPEAKING…"
                         isAiThinking -> "THINKING…"
+                        isMenuChat -> "MENU LOADED  ·  ON-DEVICE"
                         else -> "VOICE-FIRST  ·  ON-DEVICE"
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (isAiSpeaking.value || isAiThinking) Amber else InkSecondary
+                    color = when {
+                        isAiSpeaking.value || isAiThinking -> Amber
+                        isMenuChat -> Moss
+                        else -> InkSecondary
+                    }
                 )
             }
             if (isAiSpeaking.value) {
@@ -196,7 +202,7 @@ fun ChatScreen(
         // ── Messages ──
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (messages.isEmpty() && !isAiThinking) {
-                EmptyState(onSuggestion = onSendMessage)
+                EmptyState(isMenuChat = isMenuChat, onSuggestion = onSendMessage)
             } else {
                 LazyColumn(
                     state = listState,
@@ -310,13 +316,31 @@ private fun Dot(delay: Int) {
 }
 
 @Composable
-private fun EmptyState(onSuggestion: (String) -> Unit) {
-    val suggestions = listOf(
+private fun EmptyState(isMenuChat: Boolean, onSuggestion: (String) -> Unit) {
+    val suggestions = if (isMenuChat) listOf(
+        "What's vegetarian?",
+        "What's the cheapest?",
+        "Anything spicy?",
+        "What do you recommend?"
+    ) else listOf(
         "What can you help me with?",
         "Tell me a short joke",
         "Read me a poem",
         "Explain photosynthesis simply"
     )
+
+    val (titleVerb, titleObject) = if (isMenuChat) {
+        Pair("Ask about ", "the menu.")
+    } else {
+        Pair("Ask ", "anything.")
+    }
+
+    val helper = if (isMenuChat) {
+        "I've read the menu. Tap the mic and ask anything about it — or pick one:"
+    } else {
+        "Tap the mic and speak naturally. Or try one of these:"
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().padding(28.dp),
         verticalArrangement = Arrangement.Center,
@@ -327,18 +351,18 @@ private fun EmptyState(onSuggestion: (String) -> Unit) {
                 withStyle(SpanStyle(
                     fontFamily = InstrumentSerif, fontStyle = FontStyle.Italic,
                     fontSize = 44.sp, letterSpacing = (-1).sp
-                )) { append("Ask ") }
+                )) { append(titleVerb) }
                 withStyle(SpanStyle(
                     fontFamily = InterTight, fontWeight = FontWeight.SemiBold,
                     fontSize = 36.sp, letterSpacing = (-0.6).sp
-                )) { append("anything.") }
+                )) { append(titleObject) }
             },
             color = Ink,
             lineHeight = 46.sp
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            "Tap the mic and speak naturally. Or try one of these:",
+            helper,
             style = MaterialTheme.typography.bodyMedium,
             color = InkSecondary
         )

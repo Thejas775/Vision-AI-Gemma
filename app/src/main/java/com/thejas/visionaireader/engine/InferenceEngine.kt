@@ -20,6 +20,7 @@ class InferenceEngine(private val context: Context) {
     private var engine: Engine? = null
     private var conversation: Conversation? = null
     private var chatPrimed = false
+    private var menuContext: String = ""
 
     suspend fun initialize(modelPath: String) = withContext(Dispatchers.IO) {
         val config = try {
@@ -118,17 +119,35 @@ class InferenceEngine(private val context: Context) {
     private fun buildChatPrompt(userMessage: String): String =
         if (!chatPrimed) {
             chatPrimed = true
-            "You are a friendly AI assistant for visually impaired users. " +
-            "Your responses will be read aloud by text-to-speech, so keep them brief " +
-            "(1–3 sentences when possible), conversational, and avoid lists or markdown.\n\n" +
-            "User: $userMessage"
+            if (menuContext.isNotBlank()) {
+                val ctx = menuContext
+                menuContext = "" // consume — won't apply to follow-up turns (already in conversation history)
+                "You are helping a visually impaired user with a restaurant menu they just scanned. " +
+                "Answer in ONE short, natural sentence for text-to-speech. " +
+                "Speak prices in words (e.g., 'one hundred twenty rupees'). No lists, no markdown.\n\n" +
+                "MENU TEXT:\n$ctx\n\n" +
+                "User: $userMessage"
+            } else {
+                "You are a friendly AI assistant for visually impaired users. " +
+                "Your responses will be read aloud by text-to-speech, so keep them brief " +
+                "(1–3 sentences when possible), conversational, and avoid lists or markdown.\n\n" +
+                "User: $userMessage"
+            }
         } else {
             userMessage
         }
 
+    /** Called when navigating from Agent menu scan into the Chat screen. */
+    fun primeChatWithMenu(menuText: String) {
+        resetConversation()
+        menuContext = menuText
+        chatPrimed = false
+    }
+
     /** Called when entering chat mode — gives chat a clean conversation. */
     fun resetChat() {
         resetConversation()
+        menuContext = ""
     }
 
     /** Called when entering reading mode — gives reading features a clean conversation. */
@@ -228,11 +247,11 @@ class InferenceEngine(private val context: Context) {
             append("DATE:\n")
             append("ASK: no\n\n")
             append("Restaurant menu from Cafe Madras with 12 items →\n")
-            append("SPEAK: This is a menu from Cafe Madras with about twelve South Indian items. Tap the microphone to ask me anything about it.\n")
+            append("SPEAK: This is a menu from Cafe Madras with about twelve South Indian items. What would you like to know about it?\n")
             append("ACTION: menu\n")
             append("TITLE: Cafe Madras menu\n")
             append("DATE:\n")
-            append("ASK: yes\n\n")
+            append("ASK: no\n\n")
             append("RULES:\n")
             append("- ALWAYS include names, places, amounts, and dates in the SPEAK line if they appear in the text.\n")
             append("- Speak numbers and dates in words for TTS clarity.\n")
@@ -286,6 +305,7 @@ object AgentParser {
                 "calendar" -> AgentAction.CALENDAR
                 "reminder" -> AgentAction.REMINDER
                 "warn"     -> AgentAction.WARN
+                "menu"     -> AgentAction.MENU
                 else        -> AgentAction.NONE
             },
             title = map["TITLE"].orEmpty().trim('"', '\''),

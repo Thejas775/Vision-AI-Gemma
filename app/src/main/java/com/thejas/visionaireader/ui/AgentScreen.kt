@@ -6,8 +6,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -59,7 +57,6 @@ import com.thejas.visionaireader.engine.AgentAction
 import com.thejas.visionaireader.ui.theme.*
 import java.util.Locale
 import java.util.concurrent.Executors
-import kotlinx.coroutines.delay
 
 @Composable
 fun AgentScreen(
@@ -118,27 +115,13 @@ fun AgentScreen(
         tts.speak(text, TextToSpeech.QUEUE_ADD, null, idTag)
     }
 
-    // ── Processing audio cue — "Processing" + beeps every 1s ──
+    // ── Speak "Processing" once when long inference starts ──
     LaunchedEffect(state.stage, ttsReady.value) {
         val isLongProcessing = state.stage in setOf(
             AgentStage.Thinking,
-            AgentStage.Acting,
-            AgentStage.MenuChatThinking
+            AgentStage.Acting
         )
-        if (!isLongProcessing) return@LaunchedEffect
-
-        speak("Processing", "proc_${state.stage.name}")
-        delay(1100)  // give TTS room to say "Processing" before the beeps start
-
-        val tone = ToneGenerator(AudioManager.STREAM_ACCESSIBILITY, 70)
-        try {
-            while (true) {
-                tone.startTone(ToneGenerator.TONE_PROP_BEEP, 90)
-                delay(1000)
-            }
-        } finally {
-            tone.release()
-        }
+        if (isLongProcessing) speak("Processing", "proc_${state.stage.name}")
     }
 
     // ── Speak agent's response when stage transitions to Speaking ──

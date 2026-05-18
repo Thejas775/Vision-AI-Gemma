@@ -72,11 +72,54 @@ fun ReadingScreen(
     val isSpeaking = remember { mutableStateOf(false) }
     val lineIndex = remember { mutableIntStateOf(0) }
     val mode = remember { mutableStateOf("content") }
+    val webViewRef = remember { mutableStateOf<android.webkit.WebView?>(null) }
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
 
     val lines = remember(htmlContent) {
         if (htmlContent.isBlank()) emptyList()
         else android.text.Html.fromHtml(htmlContent, android.text.Html.FROM_HTML_MODE_LEGACY)
             .toString().lines().filter { it.isNotBlank() }
+    }
+
+    // Per-paragraph word ranges: list of (charStart, charEnd) for each word in each paragraph.
+    // TTS onRangeStart returns char positions inside the spoken paragraph; we map to word index.
+    val paragraphWords: List<List<IntRange>> = remember(lines) {
+        lines.map { line ->
+            "\\S+".toRegex().findAll(line).map { it.range }.toList()
+        }
+    }
+
+    // HTML rebuilt with each word wrapped in a span we can highlight from JS.
+    val highlightableHtml = remember(lines) {
+        buildString {
+            append("<html><head><meta name='viewport' content='width=device-width, initial-scale=1'>")
+            append("<style>")
+            append("body{font-family:Georgia,'Times New Roman',serif;font-size:20px;line-height:1.75;color:#0E0E0C;padding:24px;margin:0;background:transparent;}")
+            append("p{margin:16px 0;}")
+            append(".w{transition:background-color 0.12s ease;border-radius:3px;padding:0 2px;}")
+            append(".w.a{background:#FFD27A;color:#0E0E0C;}")
+            append("</style></head><body>")
+            lines.forEachIndexed { pIdx, line ->
+                val words = paragraphWords[pIdx]
+                append("<p id='p$pIdx'>")
+                words.forEachIndexed { wIdx, range ->
+                    val word = line.substring(range.first, range.last + 1)
+                    append("<span class='w' id='p${pIdx}w${wIdx}'>")
+                    append(escapeHtml(word))
+                    append("</span>")
+                    if (wIdx < words.size - 1) append(" ")
+                }
+                append("</p>")
+            }
+            append("<script>")
+            append("var __cur=null;")
+            append("function hl(p,w){")
+            append("  if(__cur){__cur.classList.remove('a');}")
+            append("  var el=document.getElementById('p'+p+'w'+w);")
+            append("  if(el){el.classList.add('a');el.scrollIntoView({behavior:'smooth',block:'center'});__cur=el;}")
+            append("}")
+            append("</script></body></html>")
+        }
     }
 
     fun speakLine(tts: TextToSpeech, index: Int) {
@@ -101,6 +144,17 @@ fun ReadingScreen(
                     ttsRef.value?.let { speakLine(it, lineIndex.intValue) }
                 } else {
                     isSpeaking.value = false
+                }
+            }
+            override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
+                if (mode.value != "content") return
+                val pIdx = utteranceId?.removePrefix("para_")?.toIntOrNull() ?: return
+                val words = paragraphWords.getOrNull(pIdx) ?: return
+                val wIdx = words.indexOfFirst { start in it.first..(it.last + 1) }
+                if (wIdx >= 0) {
+                    mainHandler.post {
+                        webViewRef.value?.evaluateJavascript("hl($pIdx,$wIdx)", null)
+                    }
                 }
             }
             @Deprecated("Deprecated in Java")
@@ -241,21 +295,12 @@ fun ReadingScreen(
                         factory = { ctx ->
                             WebView(ctx).apply {
                                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                settings.javaScriptEnabled = true
+                                webViewRef.value = this
                             }
                         },
                         update = {
-                            val styled = """
-                                <html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-                                <style>
-                                  body { font-family: Georgia, 'Times New Roman', serif; font-size: 19px; line-height: 1.7; color: #0E0E0C; padding: 24px; margin: 0; }
-                                  h1 { font-size: 28px; font-weight: 400; font-style: italic; margin-top: 16px; letter-spacing: -0.5px; }
-                                  h2 { font-size: 22px; font-weight: 400; font-style: italic; letter-spacing: -0.3px; }
-                                  p { margin: 14px 0; }
-                                  strong { font-weight: 600; }
-                                  em { font-style: italic; }
-                                </style></head><body>$htmlContent</body></html>
-                            """.trimIndent()
-                            it.loadDataWithBaseURL(null, styled, "text/html", "UTF-8", null)
+                            it.loadDataWithBaseURL(null, highlightableHtml, "text/html", "UTF-8", null)
                         },
                         modifier = Modifier.fillMaxSize()
                     )
@@ -587,3 +632,10 @@ private fun SaveDialog(message: String, onTxt: () -> Unit, onPdf: () -> Unit, on
         }
     }
 }
+
+private fun escapeHtml(s: String): String =
+    s.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&#39;")

@@ -66,5 +66,6 @@ data class AppState(
     val featureResult: String = "",
     val chatMessages: List<ChatMessage> = emptyList(),
     val isAiThinking: Boolean = false,
+    val isMenuChat: Boolean = false,
     val agent: AgentState = AgentState()
 )
